@@ -818,6 +818,7 @@ class OpenSlideWSI:
             level0_magnification = self.mag
             target_magnification = int(self.mag / (self.level_downsamples[patch_level] * custom_downsample))
 
+
         patcher = self.create_patcher(
             patch_size=patch_size,
             src_mag=level0_magnification,

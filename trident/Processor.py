@@ -1,13 +1,19 @@
 from __future__ import annotations
 import os
 import sys
+from pathlib import Path
+
+import numpy as np
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 import shutil
 from typing import Optional, List, Dict, Any
 from inspect import signature
 import geopandas as gpd
+import torch
 
-from trident.IO import create_lock, remove_lock, is_locked, update_log
+from trident.IO import create_lock, remove_lock, is_locked, update_log, save_h5
+from trident.wsi_objects.PatchDataset import PatchDataset
 from trident.wsi_objects.WSI import OpenSlideWSI
 
 
@@ -31,8 +37,11 @@ def deprecated(func):
 class Processor:
     def __init__(
         self, 
-        job_dir: str, 
-        wsi_source: str, 
+        job_dir: str,
+        patch_source: str,
+        slide_ids: str,
+        saveto: str = None,
+        # wsi_source: str,
         wsi_ext: List[str] = None, 
         wsi_cache: Optional[str] = None, 
         clear_cache: bool = False, 
@@ -106,7 +115,8 @@ class Processor:
             raise EnvironmentError("Trident requires Python 3.9 or above. Python 3.10 is recommended.")
 
         self.job_dir = job_dir
-        self.wsi_source = wsi_source
+        self.patch_source = patch_source
+        # self.wsi_source = wsi_source
         self.wsi_cache = wsi_cache
         self.wsi_ext = wsi_ext or ['.svs', '.tif', '.dcm', '.vms', '.vmu', '.ndpi', '.scn', '.mrxs', '.tiff', '.svslide', '.bif', '.czi']
         self.clear_cache = clear_cache
@@ -114,46 +124,56 @@ class Processor:
         self.custom_mpp_keys = custom_mpp_keys
 
         # Collect list of valid slides
-        assert isinstance(self.wsi_ext, list), f'wsi_ext must be a list of file extensions, got {self.wsi_ext} of type {type(self.wsi_ext)}'
-        valid_slides = []
-        for ext in self.wsi_ext:
-            assert ext.startswith('.'), 'Each extension in wsi_ext must start with a period.'
-            valid_slides.extend([name for name in os.listdir(wsi_source) if name.endswith(ext)])
+        # assert isinstance(self.wsi_ext, list), f'wsi_ext must be a list of file extensions, got {self.wsi_ext} of type {type(self.wsi_ext)}'
+        # valid_slides = []
+        # for ext in self.wsi_ext:
+        #     assert ext.startswith('.'), 'Each extension in wsi_ext must start with a period.'
+        #     valid_slides.extend([name for name in os.listdir(wsi_source) if name.endswith(ext)])
 
-        if custom_list_of_wsis is not None:
-            import pandas as pd
-            wsi_df = pd.read_csv(custom_list_of_wsis)
-            if 'wsi' not in wsi_df.columns:
-                raise ValueError("CSV with custom list of WSIs must contain a column named 'wsi'.")
-            valid_slides = wsi_df['wsi'].dropna().astype(str).tolist()
-            valid_mpps = wsi_df['mpp'].dropna().tolist() if 'mpp' in wsi_df.columns else None
-        else:
-            valid_slides = sorted(valid_slides)
-            valid_mpps = None  # not provided -- will be read from the WSI itself later. 
+        with open(slide_ids, "r") as f:
+            slides = f.read().splitlines()
 
-        print(f'Found {len(valid_slides)} valid slides in {wsi_source}.')
-        if self.wsi_cache:
-            os.makedirs(self.wsi_cache, exist_ok=True)
-            print(f'Using local cache at {wsi_cache}, which currently contains {len(os.listdir(wsi_cache))} files.')
+        valid_slides = [Path(patch_source + "/" + name) for name in slides]
+        valid_slides = [slide for slide in valid_slides if not os.path.exists(os.path.join(os.path.join(self.job_dir, saveto), 'features', f'{slide.name}.h5'))]
+
+
+        # valid_slides = [Path(patch_source + "/" + name) for name in os.listdir(patch_source)]
+
+        # if custom_list_of_wsis is not None:
+        #     import pandas as pd
+        #     wsi_df = pd.read_csv(custom_list_of_wsis)
+        #     if 'wsi' not in wsi_df.columns:
+        #         raise ValueError("CSV with custom list of WSIs must contain a column named 'wsi'.")
+        #     valid_slides = wsi_df['wsi'].dropna().astype(str).tolist()
+        #     valid_mpps = wsi_df['mpp'].dropna().tolist() if 'mpp' in wsi_df.columns else None
+        # else:
+        #     valid_slides = sorted(valid_slides)
+        #     valid_mpps = None  # not provided -- will be read from the WSI itself later.
+
+        print(f'Found {len(valid_slides)} valid slides in {patch_source}.')
+        # if self.wsi_cache:
+        #     os.makedirs(self.wsi_cache, exist_ok=True)
+        #     print(f'Using local cache at {wsi_cache}, which currently contains {len(os.listdir(wsi_cache))} files.')
 
         # Lazy-init WSI objects
-        self.wsis = []
-        for wsi_idx, wsi in enumerate(valid_slides):
-            wsi_path = os.path.join(self.wsi_cache, wsi) if self.wsi_cache is not None else os.path.join(self.wsi_source, wsi)
-            
-            # Get path to segmentation
-            tissue_seg_path = os.path.join(self.job_dir, 'contours_geojson', f'{os.path.splitext(wsi)[0]}.geojson')
-            if not os.path.exists(tissue_seg_path):
-                tissue_seg_path = None
-
-            openslide_wsi = OpenSlideWSI(
-                slide_path=wsi_path,
-                name=wsi,
-                tissue_seg_path=tissue_seg_path,
-                custom_mpp_keys=self.custom_mpp_keys,
-                mpp=valid_mpps[wsi_idx] if valid_mpps is not None else None
-            )
-            self.wsis.append(openslide_wsi)
+        self.slides = valid_slides
+        # self.wsis = []
+        # for wsi_idx, wsi in enumerate(valid_slides):
+        #     wsi_path = os.path.join(self.wsi_cache, wsi) if self.wsi_cache is not None else os.path.join(self.wsi_source, wsi)
+        #
+        #     # Get path to segmentation
+        #     tissue_seg_path = os.path.join(self.job_dir, 'contours_geojson', f'{os.path.splitext(wsi)[0]}.geojson')
+        #     if not os.path.exists(tissue_seg_path):
+        #         tissue_seg_path = None
+        #
+        #     openslide_wsi = OpenSlideWSI(
+        #         slide_path=wsi_path,
+        #         name=wsi,
+        #         tissue_seg_path=tissue_seg_path,
+        #         custom_mpp_keys=self.custom_mpp_keys,
+        #         mpp=valid_mpps[wsi_idx] if valid_mpps is not None else None
+        #     )
+        #     self.wsis.append(openslide_wsi)
 
     def populate_cache(self) -> None:
         """
@@ -451,7 +471,7 @@ class Processor:
     def run_patch_feature_extraction_job(
         self, 
         coords_dir: str, 
-        patch_encoder: torch.nn.Module, 
+        patch_encoders: Dict[str, torch.nn.Module],
         device: str, 
         saveas: str = 'h5', 
         batch_limit: int = 512, 
@@ -493,79 +513,83 @@ class Processor:
         ... )
         """
         if saveto is None:
-            saveto = os.path.join(coords_dir, f'features_{patch_encoder.enc_name}')
+            saveto = os.path.join(coords_dir, f'features')
 
         os.makedirs(os.path.join(self.job_dir, saveto), exist_ok=True)
 
         sig = signature(self.run_patch_feature_extraction_job)
         local_attrs = {k: v for k, v in locals().items() if k in sig.parameters}
-        self.save_config(
-            saveto=os.path.join(self.job_dir, coords_dir, f'_config_feats_{patch_encoder.enc_name}.json'),
-            local_attrs=local_attrs,
-            ignore = ['patch_encoder', 'loop', 'valid_slides', 'wsis']
-        )
 
-        patch_encoder.eval()
-        patch_encoder.to(device)
-        log_fp = os.path.join(self.job_dir, coords_dir, f'_logs_feats_{patch_encoder.enc_name}.txt')
-        self.loop = tqdm(self.wsis, desc=f'Extracting patch features from coords in {coords_dir}', total = len(self.wsis))
-        for wsi in self.loop:    
-            wsi_feats_fp = os.path.join(self.job_dir, saveto, f'{wsi.name}.{saveas}')
-            # Check if features already exist
-            if os.path.exists(wsi_feats_fp) and not is_locked(wsi_feats_fp):
-                self.loop.set_postfix_str(f'Features already extracted for {wsi}. Skipping...')
-                update_log(log_fp, f'{wsi.name}{wsi.ext}', 'Features extracted.')
-                self.cleanup(f'{wsi.name}{wsi.ext}')
-                continue
+        for encoder in patch_encoders.values():
+            encoder.eval()
+            encoder.to(device)
+        # log_fp = os.path.join(self.job_dir, coords_dir, f'_logs_feats_{patch_encoder.enc_name}.txt')
+        # self.loop = tqdm(self.wsis, desc=f'Extracting patch features from coords in {coords_dir}', total = len(self.wsis))
+        # for wsi in self.loop:
+        #     wsi_feats_fp = os.path.join(self.job_dir, saveto, f'{wsi.name}.{saveas}')
+        #     # Check if features already exist
+        #     if os.path.exists(wsi_feats_fp) and not is_locked(wsi_feats_fp):
+        #         self.loop.set_postfix_str(f'Features already extracted for {wsi}. Skipping...')
+        #         update_log(log_fp, f'{wsi.name}{wsi.ext}', 'Features extracted.')
+        #         self.cleanup(f'{wsi.name}{wsi.ext}')
+        #         continue
 
             # Check if WSI is available in cache
-            if self.wsi_cache is not None:
-                if is_locked(os.path.join(self.wsi_cache, f'{wsi.name}{wsi.ext}')) or not os.path.exists(os.path.join(self.wsi_cache, f'{wsi.name}{wsi.ext}')):
-                    self.loop.set_postfix_str(f'{wsi.name}{wsi.ext} not found in cache. Skipping...')
-                    update_log(log_fp, f'{wsi.name}{wsi.ext}', 'WSI not found in cache.')
-                    continue
+            # if self.wsi_cache is not None:
+            #     if is_locked(os.path.join(self.wsi_cache, f'{wsi.name}{wsi.ext}')) or not os.path.exists(os.path.join(self.wsi_cache, f'{wsi.name}{wsi.ext}')):
+            #         self.loop.set_postfix_str(f'{wsi.name}{wsi.ext} not found in cache. Skipping...')
+            #         update_log(log_fp, f'{wsi.name}{wsi.ext}', 'WSI not found in cache.')
+            #         continue
 
             # Check if coords exist
-            coords_path = os.path.join(self.job_dir, coords_dir, 'patches', f'{wsi.name}_patches.h5')
-            if not os.path.exists(coords_path) and not os.path.exists(coords_path):
-                self.loop.set_postfix_str(f'Coords not found for {wsi.name}. Skipping...')
-                update_log(log_fp, f'{wsi.name}{wsi.ext}', 'Coords not found.')
-                continue
+            # coords_path = os.path.join(self.job_dir, coords_dir, 'patches', f'{wsi.name}_patches.h5')
+            # if not os.path.exists(coords_path) and not os.path.exists(coords_path):
+            #     self.loop.set_postfix_str(f'Coords not found for {wsi.name}. Skipping...')
+            #     update_log(log_fp, f'{wsi.name}{wsi.ext}', 'Coords not found.')
+            #     continue
 
             # Check if another process has claimed this slide
-            if is_locked(wsi_feats_fp):
-                self.loop.set_postfix_str(f'{wsi.name} is locked. Skipping...')
-                continue
+            # if is_locked(wsi_feats_fp):
+            #     self.loop.set_postfix_str(f'{wsi.name} is locked. Skipping...')
+            #     continue
 
-            try:
-                self.loop.set_postfix_str(f'Extracting features from {wsi.name}{wsi.ext}')
-                create_lock(wsi_feats_fp)
-                update_log(log_fp, f'{wsi.name}{wsi.ext}', 'LOCKED. Extracting features...')
+            # self.loop.set_postfix_str(f'Extracting features from {wsi.name}{wsi.ext}')
+            # create_lock(wsi_feats_fp)
+            # update_log(log_fp, f'{wsi.name}{wsi.ext}', 'LOCKED. Extracting features...')
 
-                # under construction
-                wsi.extract_patch_features(
-                    patch_encoder,
-                    coords_path = coords_path,
-                    save_features=os.path.join(self.job_dir, saveto),
-                    device=device,
-                    saveas=saveas,
-                    batch_limit=batch_limit
-                )
+        with torch.no_grad():
+            for slide in tqdm(self.slides, disable=True):
+                dataset = PatchDataset(slide, {name: encoder.eval_transforms for name, encoder in patch_encoders.items()})
+                dataloader = DataLoader(dataset, batch_size=128, num_workers=32,
+                                        pin_memory=True, prefetch_factor=8)
 
-                remove_lock(wsi_feats_fp)
-                update_log(log_fp, f'{wsi.name}{wsi.ext}', 'Features extracted.')
-                self.cleanup(f'{wsi.name}{wsi.ext}')
-            except Exception as e:
-                if isinstance(e, KeyboardInterrupt):
-                    remove_lock(wsi_feats_fp)
-                if self.skip_errors:
-                    update_log(log_fp, wsi.name, f'ERROR: {e}')
-                    continue
-                else:
-                    raise e
-        
-        # Return the directory where the features are saved
-        return os.path.join(self.job_dir, saveto)
+                features = dict()
+                coords = []
+                for imgs, coord in dataloader:
+                    coords.append(coord)
+                    for name, encoder in patch_encoders.items():
+                        precision = encoder.precision
+                        imgs_enc = imgs[name]
+                        imgs_enc = imgs_enc.to(device)
+                        with torch.autocast(device_type='cuda', dtype=precision, enabled=(precision != torch.float32)):
+                            batch_features = encoder(imgs_enc)
+                        features.setdefault(name, []).append(batch_features.cpu().numpy())
+
+                for name in features.keys():
+                    features[name] = np.concatenate(features[name], axis=0)
+
+                coords = np.concatenate(coords, axis=0)
+                features["coords"] = coords
+
+                save_h5(os.path.join(os.path.join(self.job_dir, saveto), f'{slide.name}.h5'),
+                        assets=features,
+                        attributes={
+                            'features': {'name': slide.name},
+                        },
+                        mode='w')
+
+            # Return the directory where the features are saved
+            return os.path.join(self.job_dir, saveto)
 
     def run_slide_feature_extraction_job(
         self,

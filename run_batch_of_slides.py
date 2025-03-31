@@ -23,7 +23,9 @@ def parse_arguments():
                         choices=['cache', 'seg', 'coords', 'feat', 'all'], 
                         help='Task to run: cache, seg (segmentation), coords (save tissue coordinates), img (save tissue images), feat (extract features)')
     parser.add_argument('--job_dir', type=str, required=True, help='Directory to store outputs')
-    parser.add_argument('--wsi_dir', type=str, required=True, 
+    parser.add_argument('--patch_dir', type=str, required=True, help='Directory containing patch images')
+    parser.add_argument('--slide_ids', type=str, required=True, help='File with slide_ids')
+    parser.add_argument('--wsi_dir', type=str, required=False,
                         help='Directory containing WSI files (no nesting allowed)')
     parser.add_argument('--wsi_ext', type=str, nargs='+', default=None, 
                         help='List of allowed file extensions for WSI files')
@@ -56,14 +58,16 @@ def parse_arguments():
                         help='Minimum proportion of the patch under tissue to be kept. Between 0. and 1.0. Defaults to 0. ')
     parser.add_argument('--coords_dir', type=str, default=None, 
                         help='Directory to save/restore tissue coordinates')
-    # Feature extraction arguments 
-    parser.add_argument('--patch_encoder', type=str, default='conch_v15', 
-                        choices=['conch_v1', 'uni_v1', 'uni_v2', 'ctranspath', 'phikon', 
-                                 'resnet50', 'gigapath', 'virchow', 'virchow2', 
-                                 'hoptimus0', 'hoptimus1', 'phikon_v2', 'conch_v15', 'musk', 'hibou_l',
-                                 'kaiko-vits8', 'kaiko-vits16', 'kaiko-vitb8', 'kaiko-vitb16',
-                                 'kaiko-vitl14', 'lunit-vits8'],
-                        help='Patch encoder to use')
+    # Feature extraction arguments
+    parser.add_argument('--patch_encoder', type=str, default='uni_v2', help='Patch encoder to use')
+
+    # parser.add_argument('--patch_encoder', type=str, default='conch_v15',
+    #                     choices=['conch_v1', 'uni_v1', 'uni_v2', 'ctranspath', 'phikon',
+    #                              'resnet50', 'gigapath', 'virchow', 'virchow2',
+    #                              'hoptimus0', 'hoptimus1', 'phikon_v2', 'conch_v15', 'musk', 'hibou_l',
+    #                              'kaiko-vits8', 'kaiko-vits16', 'kaiko-vitb8', 'kaiko-vitb16',
+    #                              'kaiko-vitl14', 'lunit-vits8'],
+    #                     help='Patch encoder to use')
     parser.add_argument('--slide_encoder', type=str, default=None, 
                         choices=['threads', 'titan', 'prism', 'gigapath', 'chief', 'madeleine',
                                  'mean-virchow', 'mean-virchow2', 'mean-conch_v1', 'mean-conch_v15', 'mean-ctranspath',
@@ -81,7 +85,10 @@ def initialize_processor(args):
     """
     return Processor(
         job_dir=args.job_dir,
-        wsi_source=args.wsi_dir,
+        patch_source=args.patch_dir,
+        slide_ids=args.slide_ids,
+        saveto=args.coords_dir or f'{args.mag}x_{args.patch_size}px_{args.overlap}px_overlap',
+        # wsi_source=args.wsi_dir,
         wsi_ext=args.wsi_ext,
         wsi_cache=args.wsi_cache,
         clear_cache=args.clear_cache,
@@ -125,10 +132,10 @@ def run_task(processor, args):
             # Minimal example for feature extraction:
             # python run_batch_of_slides.py --task feat --wsi_dir wsis --job_dir trident_processed --patch_encoder uni_v1 --mag 20 --patch_size 256
             from trident.patch_encoder_models.load import encoder_factory
-            encoder = encoder_factory(args.patch_encoder)
+            encoders = encoder_factory(args.patch_encoder)
             processor.run_patch_feature_extraction_job(
                 coords_dir=args.coords_dir or f'{args.mag}x_{args.patch_size}px_{args.overlap}px_overlap',
-                patch_encoder=encoder,
+                patch_encoders=encoders,
                 device=f'cuda:{args.gpu}',
                 saveas='h5',
                 batch_limit=args.batch_size,

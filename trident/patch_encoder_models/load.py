@@ -16,59 +16,64 @@ def encoder_factory(model_name, **kwargs):
     Build a patch encoder model.
 
     Args:   
-        model_name (str): The name of the model to build.
+        name (str): The name of the model to build.
         **kwargs: Additional arguments to pass to the encoder constructor.
 
     Returns:
         torch.nn.Module: The patch encoder model.
     '''
 
-    if model_name == 'conch_v1':
-        enc = Conchv1InferenceEncoder
-    elif model_name == 'conch_v15':
-        enc = Conchv15InferenceEncoder
-    elif model_name == 'uni_v1':
-        enc = UNIInferenceEncoder
-    elif model_name == 'uni_v2':
-        enc = UNIv2InferenceEncoder
-    elif model_name == 'ctranspath':
-        enc = CTransPathInferenceEncoder
-    elif model_name == 'phikon':
-        enc = PhikonInferenceEncoder
-    elif model_name == 'resnet50':
-        enc = ResNet50InferenceEncoder
-    elif model_name == 'gigapath':
-        enc = GigaPathInferenceEncoder
-    elif model_name == 'virchow':
-        enc = VirchowInferenceEncoder
-    elif model_name == 'virchow2':
-        enc = Virchow2InferenceEncoder
-    elif model_name == 'hoptimus0':
-        enc = HOptimus0InferenceEncoder
-    elif model_name == 'hoptimus1':
-        enc = HOptimus1InferenceEncoder
-    elif model_name == 'phikon_v2':
-        enc = Phikonv2InferenceEncoder
-    elif model_name == 'musk':
-        enc = MuskInferenceEncoder
-    elif model_name == 'hibou_l':
-        enc = HibouLInferenceEncoder
-    elif model_name == 'kaiko-vitb8':
-        enc = KaikoB8InferenceEncoder
-    elif model_name == 'kaiko-vitb16':
-        enc = KaikoB16InferenceEncoder
-    elif model_name == 'kaiko-vits8':
-        enc = KaikoS8InferenceEncoder
-    elif model_name == 'kaiko-vits16':
-        enc = KaikoS16InferenceEncoder
-    elif model_name == 'kaiko-vitl14':
-        enc = KaikoL14InferenceEncoder
-    elif model_name == 'lunit-vits8':
-        enc = LunitS8InferenceEncoder
-    else:
-        raise ValueError(f"Unknown encoder name {model_name}")
+    encoders = dict()
 
-    return enc(**kwargs)
+    for name in model_name.split(','):
+        if name == 'conch_v1':
+            enc = Conchv1InferenceEncoder
+        elif name == 'conch_v15':
+            enc = Conchv15InferenceEncoder
+        elif name == 'uni_v1':
+            enc = UNIInferenceEncoder
+        elif name == 'uni_v2':
+            enc = UNIv2InferenceEncoder
+        elif name == 'ctranspath':
+            enc = CTransPathInferenceEncoder
+        elif name == 'phikon':
+            enc = PhikonInferenceEncoder
+        elif name == 'resnet50':
+            enc = ResNet50InferenceEncoder
+        elif name == 'gigapath':
+            enc = GigaPathInferenceEncoder
+        elif name == 'virchow':
+            enc = VirchowInferenceEncoder
+        elif name == 'virchow2':
+            enc = Virchow2InferenceEncoder
+        elif name == 'hoptimus0':
+            enc = HOptimus0InferenceEncoder
+        elif name == 'hoptimus1':
+            enc = HOptimus1InferenceEncoder
+        elif name == 'phikon_v2':
+            enc = Phikonv2InferenceEncoder
+        elif name == 'musk':
+            enc = MuskInferenceEncoder
+        elif name == 'hibou_l':
+            enc = HibouLInferenceEncoder
+        elif name == 'kaiko-vitb8':
+            enc = KaikoB8InferenceEncoder
+        elif name == 'kaiko-vitb16':
+            enc = KaikoB16InferenceEncoder
+        elif name == 'kaiko-vits8':
+            enc = KaikoS8InferenceEncoder
+        elif name == 'kaiko-vits16':
+            enc = KaikoS16InferenceEncoder
+        elif name == 'kaiko-vitl14':
+            enc = KaikoL14InferenceEncoder
+        elif name == 'lunit-vits8':
+            enc = LunitS8InferenceEncoder
+        else:
+            raise ValueError(f"Unknown encoder name {name}")
+
+        encoders[name] = enc(**kwargs)
+
+    return encoders
 
 ####################################################################################################
 
